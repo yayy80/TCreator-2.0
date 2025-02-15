@@ -1,617 +1,498 @@
-# Importing Libraries
-from tkinter import *
-from random import *
+#!/usr/bin/env python3
+"""
+Improved TCreator Application
+
+This application uses Tkinter to create a mod creation workspace.
+It loads mod settings, lists existing items/tiles, and allows
+creation/editing via a more modular and object-oriented structure.
+"""
+
+import os
+import re
 from math import *
-import os, re
+from random import *
+from tkinter import (
+    Tk, Frame, Button, Label, Canvas, Scrollbar, Listbox,
+    Spinbox, Checkbutton, BooleanVar, IntVar, StringVar, END, FLAT, BOTH, RIGHT, LEFT, Y, ACTIVE
+)
 from tkinter import simpledialog
 from PIL import Image
+from functools import partial
 
+# --- Constants and Enums --- #
 class FileTypes:
-    Tile = 0
-    Item = 1
+    TILE = 0
+    ITEM = 1
     NPC = 2
-    Projectile = 3
-    Dust = 4
-    Buff = 5
+    PROJECTILE = 3
+    DUST = 4
+    BUFF = 5
 
+
+# --- Utility Functions --- #
 def get_image_dimensions(image_path, width=True, height=True):
-    print(width)
-    print(height)
+    """Return image dimensions (or defaults) using PIL."""
     try:
         with Image.open(image_path) as img:
             awidth, aheight = img.size
-            if width and height:
-                toReturn = "awidth, aheight"
-            elif width:
-                toReturn = "awidth"
-            elif height:
-                toReturn = "aheight"
-            else:
-                awidth, aheight = 16, 16
-                toReturn = "awidth, aheight"
-            return eval(toReturn)
     except OSError as e:
         print(f"Unable to open image file: {e}")
         awidth, aheight = 16, 16
-        if width and height:
-            toReturn = "awidth, aheight"
-        elif width:
-            toReturn = "awidth"
-        elif height:
-            toReturn = "aheight"
-        else:
-            toReturn = "awidth, aheight"
-        return eval(toReturn)
 
-class ElementData():
-    def __init__(self, elementType, values, name):
-        self.type = elementType
-        self.values = values
-        self.name = name
+    if width and height:
+        return awidth, aheight
+    elif width:
+        return awidth
+    elif height:
+        return aheight
+    else:
+        return awidth, aheight
 
-class ElementButton(Button):
-    def __init__(self, *args, **kwargs):
-        self.type = kwargs.pop("elementType", None)
-        self.values = kwargs.pop("values", None)
-        super().__init__(*args, **kwargs)
 
 def extract_number_from_string(string):
-    pattern = r"\d+"
-    matches = re.findall(pattern, string)
+    """Extract the first number found in the given string."""
+    match = re.search(r"\d+", string)
+    return int(match.group(0)) if match else None
 
-    if matches:
-        number = int(matches[0])
-        return number
-    else:
-        return None
-        
+
+def list_files_with_extension(directory, extension):
+    """Return a list of file names (without extension) with the given extension in a directory."""
+    if not os.path.exists(directory):
+        return []
+    return [file[:-len(extension)] for file in os.listdir(directory) if file.endswith(extension)]
+
+
+def list_folders(path):
+    """Return a list of folder names in a given path."""
+    return [item for item in os.listdir(path) if os.path.isdir(os.path.join(path, item))]
+
+
+def read_file_lines(filepath):
+    """Read file lines or return empty list if file not found."""
+    try:
+        with open(filepath, 'r') as f:
+            return f.readlines()
+    except IOError as e:
+        print(f"Error reading {filepath}: {e}")
+        return []
+
+
 def get_replaced_values(file_path, file_type):
-    with open(file_path, 'r') as file:
-        content = file.read()
+    """
+    Given a file path and file type, extract and return a dictionary of values
+    for later template replacement.
+    """
+    try:
+        with open(file_path, 'r') as file:
+            content = file.read()
+    except IOError as e:
+        print(f"Error opening {file_path}: {e}")
+        return {}
 
-    if file_type == FileTypes.Item:    
+    replaced_values = {}
+
+    if file_type == FileTypes.ITEM:
         patternV = r'(\w+)\s+=\s+(.*?);'
         matchesV = re.findall(patternV, content)
-
         patternC = r'(?:Item|Tile)\.\w+\s+=\s+(.*?);'
         matchesC = re.findall(patternC, content)
-        pattern = r'Item\.DefaultToPlaceableTile\(ModContent\.TileType<Tiles\.(\w+)>'
-        match = re.search(pattern, content)
+        # Optionally extract a tile placement pattern
+        patternPlaceable = r'Item\.DefaultToPlaceableTile\(ModContent\.TileType<Tiles\.(\w+)>'
+        matchPlaceable = re.search(patternPlaceable, content)
 
+        for (key, _), value in zip(matchesV, matchesC):
+            replaced_values[f"<{key.upper()}>"] = value
 
-        replaced_values = {}
+    elif file_type == FileTypes.TILE:
+        # Patterns for tile properties
+        patterns = {
+            'solid': r'Main\.tileSolid\[Type\]\s+=\s+(.*?);',
+            'merge_dirt': r'Main\.tileMergeDirt\[Type\]\s+=\s+(.*?);',
+            'block_light': r'Main\.tileBlockLight\[Type\]\s+=\s+(.*?);',
+            'dust_type': r'DustType\s+=\s+(.*?);',
+            'map_entry': r'AddMapEntry\(new Color\((.*?)\)\);'
+        }
+        match_solid = re.search(patterns['solid'], content)
+        match_merge = re.search(patterns['merge_dirt'], content)
+        match_block = re.search(patterns['block_light'], content)
+        match_dust = re.search(patterns['dust_type'], content)
+        match_map = re.search(patterns['map_entry'], content)
 
-        for matchC, matchV in zip(matchesC, matchesV):
-            replaced_values[f"<{str(matchV[0]).upper()}>"] = matchC
-    elif file_type == FileTypes.Tile:
-        patternSolid = r'Main\.tileSolid\[Type\]\s+=\s+(.*?);'
-        patternMergeDirt = r'Main\.tileMergeDirt\[Type\]\s+=\s+(.*?);'
-        patternBlockLight = r'Main\.tileBlockLight\[Type\]\s+=\s+(.*?);'
-        patternDustType = r'DustType\s+=\s+(.*?);'
-        patternMapEntry = r'AddMapEntry\(new Color\((.*?)\)\);'
-    
-        matchSolid = re.search(patternSolid, content)
-        matchMergeDirt = re.search(patternMergeDirt, content)
-        matchBlockLight = re.search(patternBlockLight, content)
-        matchDustType = re.search(patternDustType, content)
-        matchMapEntry = re.search(patternMapEntry, content)
-    
+        if match_map:
+            colors = match_map.group(1).split(',')
+            if len(colors) >= 3:
+                map_color_r, map_color_g, map_color_b = colors[:3]
+            else:
+                map_color_r = map_color_g = map_color_b = None
+        else:
+            map_color_r = map_color_g = map_color_b = None
+
         replaced_values = {
-            'solid': matchSolid.group(1) if matchSolid else None,
-            'merge_dirt': matchMergeDirt.group(1) if matchMergeDirt else None,
-            'block_light': matchBlockLight.group(1) if matchBlockLight else None,
-            'dust_type': matchDustType.group(1) if matchDustType else None,
-            'map_color_r': matchMapEntry.group(1).split(',')[0] if matchMapEntry else None,
-            'map_color_g': matchMapEntry.group(1).split(',')[1] if matchMapEntry else None,
-            'map_color_b': matchMapEntry.group(1).split(',')[2] if matchMapEntry else None
+            'solid': match_solid.group(1) if match_solid else None,
+            'merge_dirt': match_merge.group(1) if match_merge else None,
+            'block_light': match_block.group(1) if match_block else None,
+            'dust_type': match_dust.group(1) if match_dust else None,
+            'map_color_r': map_color_r,
+            'map_color_g': map_color_g,
+            'map_color_b': map_color_b
         }
 
     return replaced_values
 
+
+def create_file_from_template(template_path, new_file_path, replacements, currentpath, currentmod):
+    """Read a template file, perform replacements, and save the new file."""
+    try:
+        with open(template_path, 'r') as template_file:
+            template_content = template_file.read()
+    except IOError as e:
+        print(f"Error reading template {template_path}: {e}")
+        return
+
+    # Replace keys in the template content
+    for key, value in replacements.items():
+        # For dynamic values, if value is callable, call it
+        if callable(value):
+            replace = value()
+        else:
+            replace = str(value)
+        template_content = template_content.replace(key, replace)
+
+    # Ensure directory exists
+    os.makedirs(os.path.dirname(new_file_path), exist_ok=True)
+    try:
+        with open(new_file_path, 'w') as new_file:
+            new_file.write(template_content)
+        print(f"Created file: {new_file_path}")
+    except IOError as e:
+        print(f"Error writing file {new_file_path}: {e}")
+
+    # Open workspace after saving (if desired)
+    # For example: app.open_workspace(currentpath, currentmod)
+
+
+# --- Data Classes --- #
+class ElementData:
+    def __init__(self, element_type, values, name):
+        self.type = element_type
+        self.values = values  # A dictionary of properties
+        self.name = name
+
+
+class ElementButton(Button):
+    def __init__(self, parent, element_data, accent_color, highlight_color, command, **kwargs):
+        self.element_data = element_data
+        super().__init__(
+            parent,
+            text=element_data.name,
+            bg=accent_color,
+            activebackground=highlight_color,
+            command=partial(command, element_data),
+            **kwargs
+        )
+
+
+# --- UI Components --- #
 class ScrollableWindow(Frame):
-    """
-    A custom scrollable window widget.
+    def __init__(self, parent, items, accent_color, highlight_color, button_click_callback, width=300, height=200, bg="white"):
+        super().__init__(parent, bg=bg)
+        self.accent_color = accent_color
+        self.highlight_color = highlight_color
+        self.button_click_callback = button_click_callback
 
-    Parameters:
-        parent (Tkinter widget): The parent widget for the ScrollableWindow.
-        items (list): A list of items to be displayed as buttons in the window.
-        width (int): The width of the ScrollableWindow in pixels (default: 300).
-        height (int): The height of the ScrollableWindow in pixels (default: 200).
-        bg (str): The background color of the ScrollableWindow (default: "white").
-
-    Methods:
-        button_click(item)
-            Executes when a button in the ScrollableWindow is clicked.
-            Prints a message indicating which button was clicked.
-
-    Example usage:
-        # Create a Tkinter window
-        root = Tk()
-
-        # Create a list of items
-        items = ["Button 1", "Button 2", "Button 3"]
-
-        # Create a ScrollableWindow instance
-        scroll_window = ScrollableWindow(root, items)
-
-        # Pack the ScrollableWindow into the root window
-        scroll_window.pack()
-
-        # Start the Tkinter event loop
-        root.mainloop()
-    """
-
-    def __init__(self, parent, items, width=300, height=200, bg="white", fg="white"):
-        """
-        Initializes the ScrollableWindow object.
-
-        Parameters:
-            parent (Tkinter widget): The parent widget for the ScrollableWindow.
-            items (list): A list of items to be displayed as buttons in the window.
-            width (int): The width of the ScrollableWindow in pixels (default: 300).
-            height (int): The height of the ScrollableWindow in pixels (default: 200).
-            bg (str): The background color of the ScrollableWindow (default: "white").
-        """
-        Frame.__init__(self, parent, bg=bg)
-
-        # Create a canvas and scrollbar
         canvas = Canvas(self, bg=bg, relief=FLAT)
         scrollbar = Scrollbar(self, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scrollbar.set)
 
-        # Add a frame inside the canvas
-        frame = Frame(canvas, bg=bg)
-        frame.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=frame, anchor="nw")
+        self.inner_frame = Frame(canvas, bg=bg)
+        self.inner_frame.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=self.inner_frame, anchor="nw")
 
-        # Configure the scrollbar to scroll the canvas
-        scrollbar.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side=RIGHT, fill=Y)
+        canvas.pack(side=LEFT, fill=BOTH, expand=True)
 
-        # Add buttons to the frame
         for item in items:
-            button = ElementButton(frame, bg=accentColor, activebackground=highlightColor, text=item.name, command=lambda item=item: self.button_click(item), elementType=item.type, values=item.values)
-            button.pack(fill="x", expand=True)
-        
-    def button_click(self, item):
+            btn = ElementButton(
+                self.inner_frame, item, accent_color, highlight_color,
+                command=self.button_click_callback
+            )
+            btn.pack(fill="x", expand=True)
+
+
+# --- Main Application Class --- #
+class TCreatorApp:
+    def __init__(self):
+        # Read colors and settings
+        self.main_theme_color = "#FFFFFF"
+        self.secondary_theme_color = "#CCCCCC"
+        self.accent_color = "#FFAA00"
+        self.highlight_color = "#FFD700"
+        self.read_colors("colors.TCtheme")
+        self.mod_location = self.read_mod_settings("settings.txt")
+
+        # Initialize Tkinter root window
+        self.root = Tk()
+        self.root.title("TCreator - Start Menu")
+        self.root.geometry("1000x600")
+        self.root.resizable(False, False)
+
+        self.current_mod_path = ""
+        self.current_mod = ""
+        self.items = []
+        self.tiles = []
+
+        # Frames for navigation and workspace
+        self.side_frame = None
+        self.main_frame = None
+
+        self.create_main_menu()
+
+    def read_colors(self, filepath):
+        lines = read_file_lines(filepath)
+        if len(lines) >= 4:
+            self.main_theme_color = lines[0].strip()
+            self.secondary_theme_color = lines[1].strip()
+            self.accent_color = lines[2].strip()
+            self.highlight_color = lines[3].strip()
+        else:
+            print("colors.TCtheme does not contain enough lines; using defaults.")
+
+    def read_mod_settings(self, filepath):
+        lines = read_file_lines(filepath)
+        if lines:
+            mod_location = lines[0].strip()
+            print(f"Mod location set to: {mod_location}")
+            return mod_location
+        return ""
+
+    def create_main_menu(self):
+        """Create the main menu UI that lists available mods."""
+        # Clear any existing widgets
+        for widget in self.root.winfo_children():
+            widget.destroy()
+
+        # Side frame for mods list and main frame for details
+        self.side_frame = Frame(self.root, width=300, height=600, bg=self.secondary_theme_color)
+        self.side_frame.grid(row=0, column=0)
+        self.main_frame = Frame(self.root, width=700, height=600, bg=self.main_theme_color)
+        self.main_frame.grid(row=0, column=1)
+
+        mods = list_folders(self.mod_location)
+        btn_y = 2
+        for mod in mods:
+            btn = Button(
+                self.side_frame,
+                text=mod,
+                height=1,
+                width=41,
+                bg=self.accent_color,
+                activebackground=self.highlight_color,
+                command=partial(self.open_workspace, os.path.join(self.mod_location, mod), mod)
+            )
+            btn.place(x=2, y=btn_y)
+            btn_y += 27
+
+    def open_workspace(self, mod_path, mod_name):
+        """Set up the workspace for a selected mod."""
+        self.current_mod_path = mod_path
+        self.current_mod = mod_name
+
+        # Clear the window
+        for widget in self.root.winfo_children():
+            widget.destroy()
+
+        self.root.title(f"TCreator - {mod_path}")
+
+        # Load items and tiles
+        self.items = list_files_with_extension(os.path.join(mod_path, "Items"), ".cs")
+        self.tiles = list_files_with_extension(os.path.join(mod_path, "Tiles"), ".cs")
+
+        # Combine into ElementData objects
+        elements = []
+        for name in self.items:
+            filepath = os.path.join(mod_path, "Items", f"{name}.cs")
+            values = get_replaced_values(filepath, FileTypes.ITEM)
+            elements.append(ElementData("item", values, name))
+        for name in self.tiles:
+            filepath = os.path.join(mod_path, "Tiles", f"{name}.cs")
+            values = get_replaced_values(filepath, FileTypes.TILE)
+            elements.append(ElementData("tile", values, name))
+
+        # Side panel for element list
+        self.side_frame = Frame(self.root, width=150, height=600, bg=self.secondary_theme_color)
+        self.side_frame.pack(side="left", fill="both")
+
+        # Main panel with scrollable list of elements
+        self.main_frame = ScrollableWindow(
+            self.root, elements,
+            accent_color=self.accent_color,
+            highlight_color=self.highlight_color,
+            button_click_callback=self.on_element_click,
+            bg=self.main_theme_color
+        )
+        self.main_frame.pack(side="right", fill="both", expand=True)
+
+        # Controls to create a new element
+        self.create_new_element_controls()
+
+    def create_new_element_controls(self):
+        """Creates UI controls for creating new elements."""
+        self.create_list = Listbox(self.root, bg=self.accent_color, selectbackground=self.highlight_color)
+        self.create_list.place(x=2, y=2)
+        for option in ['item', 'tile', 'npc', 'projectile', 'buff']:
+            self.create_list.insert(END, option)
+
+        create_btn = Button(
+            self.root,
+            bg=self.accent_color,
+            activebackground=self.highlight_color,
+            text="Create",
+            height=1,
+            width=16,
+            command=self.create_element
+        )
+        create_btn.place(x=2, y=180)
+
+        main_menu_btn = Button(
+            self.root,
+            bg=self.accent_color,
+            activebackground=self.highlight_color,
+            text="Main Menu",
+            command=self.create_main_menu
+        )
+        main_menu_btn.place(x=2, y=552)
+
+    def on_element_click(self, element_data):
+        """Callback when an element button is clicked."""
+        print(f"Button '{element_data.name}' clicked!")
+        for key, value in element_data.values.items():
+            print(f"{key} = {value}")
+
+        # Dispatch to the correct creation function based on element type
+        if element_data.type == "item":
+            self.create_element(element_data)
+        elif element_data.type == "tile":
+            self.create_element(element_data)
+        else:
+            print("Not implemented for", element_data.type)
+
+    def create_element(self, element_data=None):
         """
-        Event handler for button clicks.
-
-        Parameters:
-            item (str): The label of the button that was clicked.
+        Create or edit an element.
+        If element_data is provided, prefill with the replaced values.
         """
-        print(f"Button '{item.name}' clicked!")
-        print(f"Length:{len(item.values)}")
-        extras = []
-        for val in item.values:
-            print(val + " = " + item.values[val])
-            extras.append(item.values[val])
-        if item.type == "item":
-            print(f"{item.name}")
-            createElement(toMakeValue="'item'", nameValue=f"'{item.name}'", extraData=item.values)
-        elif item.type == "tile":
-            print(f"{item.name}")
-            createElement(toMakeValue="'tile'", nameValue=f"'item.name'", extraData=item.values)
+        # Clear current UI (you may choose to open in a new window instead)
+        for widget in self.root.winfo_children():
+            widget.destroy()
 
-def list_files_with_extension(directory, extension):
-    if not os.path.exists(directory):
-        return []
-    
-    files = []
-    for file in os.listdir(directory):
-        if file.endswith(extension):
-            files.append(file[:-len(extension)])
-    return files
+        # Ask for the element name (or use existing name)
+        if element_data:
+            name = element_data.name
+            element_type = element_data.type
+            extra_data = element_data.values
+        else:
+            element_type = self.create_list.get(self.create_list.curselection())
+            name = simpledialog.askstring('Text Input', 'Name without spaces:')
+            extra_data = None
 
-def create_file_from_template(template_path, new_file_path, replacements):
-    with open(template_path, 'r') as template_file:
-        template_content = template_file.read()
+        # Build a simple form based on type (example shown for "item" and "tile")
+        if element_type == "item":
+            self.build_item_form(name, extra_data)
+        elif element_type == "tile":
+            self.build_tile_form(name, extra_data)
+        else:
+            Label(self.root, text=f"Creation form for '{element_type}' not implemented.").pack()
 
-        # Perform replacements in the template content
-        for key, value in replacements.items():
-            print(f"{key} : {value}")
-            if eval(value) and key == "tile":
-                toKey = "<PLACEABLETILE>"
-                replace = "Item.DefaultToPlaceableTile(ModContent.TileType<Tiles." + tile.get() + ">());"
-            elif not eval(value) and key == "tile":
-                toKey = "<PLACEABLETILE>"
-                replace = " "
-            else:
-                toKey = key
-                replace = eval(value)
-            template_content = template_content.replace(toKey, replace)
+    def build_item_form(self, name, extra_data):
+        """Build the UI form for creating/editing an item."""
+        Label(self.root, text=f"Create/Edit Item: {name}", bg=self.main_theme_color).pack(pady=10)
 
-    # Create the directory if it doesn't exist
-    directory = os.path.dirname(new_file_path)
-    if not os.path.exists(directory):
-        os.makedirs(directory)
+        # Example variables
+        use_time = IntVar(value=int(extra_data.get("<USETIME>", 0)) if extra_data else 0)
+        damage = IntVar(value=int(extra_data.get("<DAMAGE>", 0)) if extra_data else 0)
 
-    with open(new_file_path, 'w') as new_file:
-        new_file.write(template_content)
+        Label(self.root, text="Use Time", bg=self.main_theme_color).pack()
+        Spinbox(self.root, from_=0, to=10000, textvariable=use_time, bg=self.accent_color).pack()
 
-    openWorkspace(currentpath, currentmod)
+        Label(self.root, text="Damage", bg=self.main_theme_color).pack()
+        Spinbox(self.root, from_=0, to=10000, textvariable=damage, bg=self.accent_color).pack()
 
-class Mod:
-    def __init__(self, name):
-        self._name = name
+        # More fields can be added similarly...
+        # Save button that triggers template file creation.
+        save_btn = Button(
+            self.root,
+            text="Save",
+            bg=self.accent_color,
+            activebackground=self.highlight_color,
+            command=lambda: self.save_template(
+                "item", name, {
+                    "<NAME>": name,
+                    "<USETIME>": lambda: str(use_time.get()),
+                    "<DAMAGE>": lambda: str(damage.get()),
+                    # Add more key replacements here...
+                    "<WIDTH>": lambda: str(get_image_dimensions(os.path.join(self.current_mod_path, "Items", f"{name}.png"), width=True)),
+                    "<HEIGHT>": lambda: str(get_image_dimensions(os.path.join(self.current_mod_path, "Items", f"{name}.png"), height=True))
+                }
+            )
+        )
+        save_btn.pack(pady=20)
 
-    def name(self):
-        return self._name
+    def build_tile_form(self, name, extra_data):
+        """Build the UI form for creating/editing a tile."""
+        Label(self.root, text=f"Create/Edit Tile: {name}", bg=self.main_theme_color).pack(pady=10)
 
-def createElement(toMakeValue="canMake.get(ACTIVE)", nameValue="simpledialog.askstring('Text Input', 'Name without spaces:')", extraData=None):
-    global mainFrame, name
+        # Example variables
+        map_r = IntVar(value=int(extra_data.get("map_color_r", 0)) if extra_data else 0)
+        map_g = IntVar(value=int(extra_data.get("map_color_g", 0)) if extra_data else 0)
+        map_b = IntVar(value=int(extra_data.get("map_color_b", 0)) if extra_data else 0)
 
-    print(nameValue)
-    
-    toMake = eval(toMakeValue)
-    name = eval(nameValue)
-    
-    for widget in mainFrame.winfo_children():
-        widget.destroy()
-    mainFrame.destroy()
-        
-    mainFrame = Frame(root, width=850, height=600, bg=mainThemeColor)
-    mainFrame.pack(side="right", fill="both", expand=True)
+        Label(self.root, text="Map Color R", bg=self.main_theme_color).pack()
+        Spinbox(self.root, from_=0, to=255, textvariable=map_r, bg=self.accent_color).pack()
 
-    tMod = Mod(name)
-    
-    replaces = {'<MOD>' : f'''"{currentmod}"''', '<NAME>' : f'''"{name}"'''}
+        Label(self.root, text="Map Color G", bg=self.main_theme_color).pack()
+        Spinbox(self.root, from_=0, to=255, textvariable=map_g, bg=self.accent_color).pack()
 
-    #for prop in elementTypes[toMake].properties:
-    #    exec(prop)
+        Label(self.root, text="Map Color B", bg=self.main_theme_color).pack()
+        Spinbox(self.root, from_=0, to=255, textvariable=map_b, bg=self.accent_color).pack()
 
-    if toMake == "item":
-        global accessory, defense, tile, doTile, channel, noMelee, noUseGraphic, axe, hammer, pick, tileBoost, useStyle, damageType, useAnimation, sound, rarity, useTime, useAnimation, damage, knockback, crit, goldcost, autoReuse
-        useStyles = ["ItemUseStyleID.Swing"]
-        damageTypes = ["DamageClass.Melee"]
-        rarities = ["ItemRarityID.Blue"]
-        sounds = ["SoundID.Item1"]
+        # More fields can be added here...
 
-        tile = StringVar()
-        
-        useStyle = Listbox(root, bg=accentColor, selectbackground=highlightColor)
-        for item in useStyles:
-            useStyle.insert(END, item)
-        useStyle.place(x=152, y=2)
-            
-        useTime = IntVar()
-        useAnimation = IntVar()
-        damage = IntVar()
-        knockback = IntVar()
-        crit = IntVar()
-        goldcost = IntVar()
-        axe = IntVar()
-        hammer = IntVar()
-        pick = IntVar()
-        defense = IntVar()
-        tileBoost = IntVar()
+        save_btn = Button(
+            self.root,
+            text="Save",
+            bg=self.accent_color,
+            activebackground=self.highlight_color,
+            command=lambda: self.save_template(
+                "tile", name, {
+                    "<NAME>": name,
+                    "<MAPR>": lambda: str(map_r.get()),
+                    "<MAPG>": lambda: str(map_g.get()),
+                    "<MAPB>": lambda: str(map_b.get()),
+                    "<SOLID>": lambda: "true"  # Example static replacement
+                    # Add more key replacements as needed...
+                }
+            )
+        )
+        save_btn.pack(pady=20)
 
-        Label(root, bg=accentColor, text="Use time").place(x = 152, y = 180)
-        Spinbox(root, bg=accentColor, from_=-2147483647, to=2147483647, textvariable=useTime).place(x=152, y=200)
-        Label(root, bg=accentColor, text="Use animation").place(x = 302, y = 180)
-        Spinbox(root, bg=accentColor, from_=-2147483647, to=2147483647, textvariable=useAnimation).place(x=302, y=200)
-        Label(root, bg=accentColor, text="Damage").place(x = 152, y = 230)
-        Spinbox(root, bg=accentColor, from_=-2147483647, to=2147483647, textvariable=damage).place(x=152, y=250)
-        Label(root, bg=accentColor, text="Knockback").place(x = 302, y = 230)
-        Spinbox(root, bg=accentColor, from_=-2147483647, to=2147483647, textvariable=knockback).place(x=302, y=250)
-        Label(root, bg=accentColor, text="Crit").place(x = 152, y = 280)
-        Spinbox(root, bg=accentColor, from_=-2147483647, to=2147483647, textvariable=crit).place(x=152, y=300)
-        Label(root, bg=accentColor, text="Gold cost").place(x = 302, y = 280)
-        Spinbox(root, bg=accentColor, from_=-2147483647, to=2147483647, textvariable=goldcost).place(x=302, y=300)
-        Label(root, bg=accentColor, text="Axe").place(x = 152, y = 330)
-        Spinbox(root, bg=accentColor, from_=-2147483647, to=2147483647, textvariable=axe).place(x=152, y=350)
-        Label(root, bg=accentColor, text="Hammer").place(x = 302, y = 330)
-        Spinbox(root, bg=accentColor, from_=-2147483647, to=2147483647, textvariable=hammer).place(x=302, y=350)
-        Label(root, bg=accentColor, text="Pick").place(x = 152, y = 380)
-        Spinbox(root, bg=accentColor, from_=-2147483647, to=2147483647, textvariable=pick).place(x=152, y=400)
-        Label(root, bg=accentColor, text="Tile boost").place(x = 302, y = 380)
-        Spinbox(root, bg=accentColor, from_=-2147483647, to=2147483647, textvariable=tileBoost).place(x=302, y=400)
-        
-        damageType = Listbox(root, bg=accentColor, selectbackground=highlightColor)
-        for item in damageTypes:
-            damageType.insert(END, item)
-        damageType.place(x=302, y=2)
-        
-        rarity = Listbox(root, bg=accentColor, selectbackground=highlightColor)
-        
-        for item in rarities:
-            rarity.insert(END, item)
-        rarity.place(x=452, y=2)
-            
-        sound = Listbox(root, bg=accentColor, selectbackground=highlightColor)
-        for item in sounds:
-            sound.insert(END, item)
-        sound.place(x=602, y=2)
-          
-        autoReuse = BooleanVar()
-        channel = BooleanVar()
-        noMelee = BooleanVar()
-        noUseGraphic = BooleanVar()
-        accessory = BooleanVar()
-        doTile = BooleanVar()
+    def save_template(self, element_type, name, replacements):
+        """
+        Create a file from the appropriate template based on the element type.
+        The `replacements` argument should be a dict mapping template placeholders to
+        either static values or callables returning strings.
+        """
+        template_path = os.path.join("Templates", f"{element_type}.txt")
+        # Save into Items or Tiles folder based on type
+        target_folder = os.path.join(self.current_mod_path, f"{element_type.capitalize()}s")
+        new_file_path = os.path.join(target_folder, f"{name}.cs")
+        create_file_from_template(template_path, new_file_path, replacements, self.current_mod_path, self.current_mod)
+        # After saving, return to workspace
+        self.open_workspace(self.current_mod_path, self.current_mod)
 
-        replaces['<HEIGHT>'] = "str(get_image_dimensions(f'{currentpath}\\Items\\{name}.png', width=False))"
-        replaces['<WIDTH>'] = "str(get_image_dimensions(f'{currentpath}\\Items\\{name}.png', height=False))"
-        replaces['<USESTYLE>'] = "useStyle.get(ACTIVE)"
-        replaces['<USETIME>'] = "str(useTime.get())"
-        replaces['<USEANIMATION>'] = "str(useAnimation.get())"
-        replaces['<AUTOREUSE>'] = "str(autoReuse.get()).lower()"
-        replaces['<DAMAGETYPE>'] = "damageType.get(ACTIVE)"
-        replaces['<DAMAGE>'] = "str(damage.get())"
-        replaces['<KNOCKBACK>'] = "str(knockback.get())"
-        replaces['<CRIT>'] = "str(crit.get())"
-        replaces['<GOLDCOST>'] = "str(goldcost.get())"
-        replaces['<RARITY>'] = "rarity.get(ACTIVE)"
-        replaces['<SOUND>'] = "sound.get(ACTIVE)"
-        replaces['<AXE>'] = "str(axe.get())"
-        replaces['<HAMMER>'] = "str(hammer.get())"
-        replaces['<PICK>'] = "str(pick.get())"
-        replaces['<TILEBOOST>'] = "str(tileBoost.get())"
-        replaces['<CHANNEL>'] = "str(channel.get()).lower()"
-        replaces['<NOMELEE>'] = "str(noMelee.get()).lower()"
-        replaces['<NOUSEGRAPHIC>'] = "str(noUseGraphic.get()).lower()"
-        replaces['<DEFENSE>'] = "str(defense.get())"
-        replaces['<ACCESSORY>'] = "str(accessory.get()).lower()"
-        replaces['tile'] = "doTile.get()"
-        
-        Checkbutton(root, bg=accentColor, activebackground=highlightColor, text="Auto reuse", variable=autoReuse).place(x=152, y=500)
-        Checkbutton(root, bg=accentColor, activebackground=highlightColor, text="Channel", variable=channel).place(x=302, y=500)
-        Checkbutton(root, bg=accentColor, activebackground=highlightColor, text="No melee", variable=noMelee).place(x=452, y=500)
-        Checkbutton(root, bg=accentColor, activebackground=highlightColor, text="No use graphic", variable=noUseGraphic).place(x=602, y=500)
-        Checkbutton(root, bg=accentColor, activebackground=highlightColor, text="Tile", variable=doTile).place(x=152, y=550)
-        Entry(root, bg=accentColor, textvariable=tile).place(x=302, y=550)
-        Checkbutton(root, bg=accentColor, activebackground=highlightColor, text="Accessory", variable=accessory).place(x=452, y=550)
+    def run(self):
+        self.root.mainloop()
 
-        if not extraData == None:
-            try:
-                useTime.set(int(extraData["<USETIME>"]))
-            except:
-                pass
-            try:
-                useAnimation.set(int(extraData["<USEANIMATION>"]))
-            except:
-                pass
-            try:
-                autoReuse.set(bool(extraData["<AUTOREUSE>"] == "true"))
-            except:
-                pass
-            try:
-                damage.set(int(extraData["<DAMAGE>"]))
-            except:
-                pass
-            try:
-                knockback.set(int(extraData["<KNOCKBACK>"]))
-            except:
-                pass
-            try:
-                crit.set(int(extraData["<CRIT>"]))
-            except:
-                pass
-            try:
-                goldcost.set(extract_number_from_string(extraData["<VALUE>"]))
-            except:
-                pass
-            try:
-                axe.set(int(extraData["<AXE>"]))
-            except:
-                pass
-            try:
-                hammer.set(int(extraData["<HAMMER>"]))
-            except:
-                pass
-            try:
-                pick.set(int(extraData["<PICK>"]))
-            except:
-                pass
-            try:
-                tileBoost.set(int(extraData["<TILEBOOST>"]))
-            except:
-                pass
-            try:
-                channel.set(bool(extraData["<CHANNEL>"] == "true"))
-            except:
-                pass
-            try:
-                noMelee.set(bool(extraData["<NOMELEE>"] == "true"))
-            except:
-                pass
-            try:
-                noUseGraphic.set(bool(extraData["<NOUSEGRAPHIC>"] == "true"))
-            except:
-                pass
-            try:
-                accessory.set(bool(extraData["<ACCESSORY>"] == "true"))
-            except:
-                pass
-            try:
-                defense.set(int(extraData["<DEFENSE>"]))
-            except:
-                pass
-            try:
-                doTile.set(True)
-                tile.set(extraData["TileToPlace"])
-            except:
-                pass
-    elif toMake == "tile":
-        global solid, mergeDirt, blockLight, dust, mapr, mapg, mapb
-        dusts = ["DustID.Stone"]
 
-        dust = Listbox(root, bg=accentColor, selectbackground=highlightColor)
-        for item in dusts:
-            dust.insert(END, item)
-        dust.place(x=152, y=2)
-
-        mapr = IntVar()
-        mapg = IntVar()
-        mapb = IntVar()
-        solid = BooleanVar()
-        mergeDirt = BooleanVar()
-        blockLight = BooleanVar()
-
-        Label(root, text="Map R", bg=accentColor).place(x = 152, y = 180)
-        Spinbox(root, bg=accentColor, from_=-2147483647, to=2147483647, textvariable=mapr).place(x=152, y=200)
-        Label(root, text="Map G", bg=accentColor).place(x = 302, y = 180)
-        Spinbox(root, bg=accentColor, from_=-2147483647, to=2147483647, textvariable=mapg).place(x=302, y=200)
-        Label(root, text="Map B", bg=accentColor).place(x = 452, y = 180)
-        Spinbox(root, bg=accentColor, from_=-2147483647, to=2147483647, textvariable=mapb).place(x=452, y=200)
-
-        Checkbutton(root, bg=accentColor, activebackground=highlightColor, text="Solid", variable=solid).place(x=152, y=500)
-        Checkbutton(root, bg=accentColor, activebackground=highlightColor, text="Merge dirt", variable=mergeDirt).place(x=302, y=500)
-        Checkbutton(root, bg=accentColor, activebackground=highlightColor, text="Block light", variable=blockLight).place(x=452, y=500)
-    
-        replaces['<SOLID>'] = "str(solid.get()).lower()"
-        replaces['<MERGEDIRT>'] = "str(mergeDirt.get()).lower()"
-        replaces['<BLOCKLIGHT>'] = "str(blockLight.get()).lower()"
-        replaces['<DUST>'] = "dust.get(ACTIVE)"
-        replaces['<MAPR>'] = "str(mapr.get())"
-        replaces['<MAPG>'] = "str(mapg.get())"
-        replaces['<MAPB>'] = "str(mapb.get())"
-
-    if not extraData == None:
-        try:
-            solid.set(bool(extraData["solid"] == "true"))
-        except:
-            pass
-        try:
-            mergeDirt.set(bool(extraData["merge_dirt"] == "true"))
-        except:
-            pass
-        try:
-            blockLight.set(bool(extraData["block_light"] == "true"))
-        except:
-            pass
-        try:
-            mapr.set(int(extraData["map_color_r"]))
-        except:
-            pass
-        try:
-            mapg.set(int(extraData["map_color_g"]))
-        except:
-            pass
-        try:
-            mapb.set(int(extraData["map_color_b"]))
-        except:
-            pass
-
-    #print("eh")
-    Button(root, text="Save", height = 1, width = 16, bg=accentColor, activebackground=highlightColor, command = lambda: create_file_from_template(f"Templates/{toMake}.txt", f"{currentpath}\\{toMake.capitalize()}s\\{name}.cs", replaces)).place(x=152, y=450)
-
-def openWorkspace(modpath, mod):
-    global currentpath
-    global currentmod
-    global root
-    global sideFrame
-    global mainFrame
-    global canMake
-    global make
-    global items
-    global tiles
-    
-    for widget in root.winfo_children():
-        widget.destroy()
-        
-    root.title(f"TCreator - {modpath}")
-
-    currentpath = modpath
-    currentmod = mod
-
-    toadd = []
-
-    items = list_files_with_extension(currentpath+"/Items", ".cs")
-    tiles = list_files_with_extension(currentpath+"/Tiles", ".cs")
-
-    for item in items:
-        toadd.append(ElementData("item", get_replaced_values(currentpath + "\\Items\\" + item + ".cs", FileTypes.Item), item))
-        #print(item)
-
-    for tile in tiles:
-        toadd.append(ElementData("tile", get_replaced_values(currentpath + "\\Tiles\\" + tile + ".cs", FileTypes.Tile), tile))
-        #print(tile)
-
-    sideFrame = Frame(root, width=150, height=600, bg=secondaryThemeColor)
-    mainFrame = ScrollableWindow(root, width=850, height=600, bg=mainThemeColor, items=toadd)
-    sideFrame.pack(side="left", fill="both")
-    mainFrame.pack(side="right", fill="both", expand=True)
-    
-    canMake = Listbox(root, bg=accentColor, selectbackground=highlightColor)
-    canMake.place(x=2, y=2)
-    make = Button(root, bg=accentColor, activebackground=highlightColor, text="Create", height = 1, width = 16, command=createElement)
-    make.place(x=2, y=180)
-
-    Button(root, bg=accentColor, activebackground=highlightColor, text = "Main Menu", command = main_menu_back).place(x=2, y=552)
-
-    itemsa = ['item', 'tile', 'npc', 'projectile', 'buff']
-    for item in itemsa:
-        canMake.insert(END, item)
-
-def list_folders(path):
-    folders = []
-    for item in os.listdir(path):
-        item_path = os.path.join(path, item)
-        if os.path.isdir(item_path):
-            folders.append(item)
-    return folders
-
-def main_menu_back():
-    global root
-    for widget in root.winfo_children():
-        widget.destroy()
-
-    root.destroy()
-
-    main_menu()
-
-def readColors(file):
-    global secondaryThemeColor, mainThemeColor, accentColor, highlightColor
-    lines = file.readlines()
-    if len(lines) >= 4:
-        mainThemeColor = lines[0].strip()
-        secondaryThemeColor = lines[1].strip()
-        accentColor = lines[2].strip()
-        highlightColor = lines[3].strip()
-    else:
-        print("The file does not contain enough lines.")
-
-def main_menu():
-    global root, sideFrame, mainFrame, settingsfile, modlocation, mods, currentpath, currentmod, btny, amod, items, tiles, createBtn
-    # Create The Window
-    root = Tk()
-    root.title("TCreator - Start Menu")
-    root.geometry("1000x600")
-    root.resizable(0, 0)
-    
-    readColors(open("colors.TCtheme", "r+"))
-
-    # Create The Side Frame
-    sideFrame = Frame(root, width=300, height=600, bg=secondaryThemeColor)
-
-    # Create The Main Frame
-    mainFrame = Frame(root, width=700, height=600, bg=mainThemeColor)
-
-    # Place Everything On The Grid
-    sideFrame.grid(row = 0, column = 0)
-    mainFrame.grid(row = 0, column = 1)
-
-    # Create A List Of Mods
-    settingsfile = open("settings.txt", "r+")
-
-    for line in settingsfile:
-        modlocation = line.strip()
-     
-    mods = list_folders(modlocation)
-
-    currentpath = ""
-    currentmod = ""
-
-    btny = 2
-
-    for amod in range(len(mods)):
-        Button(root, text=mods[amod], height=1, width=41, bg=accentColor, activebackground=highlightColor, command=lambda amod=amod: openWorkspace(os.path.join(modlocation, mods[amod]), mods[amod])).place(x=2, y=btny)
-        btny += 27
-
-    items = []
-    tiles = []
-
-main_menu()
-
-mainloop()
+if __name__ == '__main__':
+    app = TCreatorApp()
+    app.run()
